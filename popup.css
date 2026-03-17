@@ -615,3 +615,199 @@ body {
   color: var(--text-muted);
   white-space: nowrap;
 }
+
+/* ── Spam bar ─────────────────────────────────────────────── */
+
+:root {
+  --spam: #f5a623;
+  --spam-dim: rgba(245, 166, 35, 0.12);
+  --spam-border: rgba(245, 166, 35, 0.3);
+}
+
+.spam-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.spam-bar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spam-bar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.spam-bar-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+/* Server status dot */
+.server-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background var(--transition);
+}
+
+.dot-unknown {
+  background: #555;
+}
+
+.dot-online {
+  background: var(--green);
+  box-shadow: 0 0 5px var(--green);
+}
+
+.dot-offline {
+  background: var(--accent);
+}
+
+/* Spam scan button */
+.btn-spam-scan {
+  background: var(--spam-dim);
+  color: var(--spam);
+  border: 1px solid var(--spam-border);
+}
+
+.btn-spam-scan:hover:not(:disabled) {
+  background: var(--spam);
+  color: #000;
+}
+
+.btn-spam-scan:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Spam alert ────────────────────────────────────────────── */
+
+.spam-alert {
+  background: var(--spam-dim);
+  border-bottom: 1px solid var(--spam-border);
+  padding: 10px 16px;
+}
+
+.spam-alert-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.spam-alert-icon {
+  color: var(--spam);
+  font-size: 14px;
+}
+
+.spam-alert-text {
+  font-size: 12px;
+  color: var(--spam);
+  font-family: var(--font-display);
+  font-weight: 600;
+}
+
+.spam-alert-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-view-spam {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+}
+
+.btn-view-spam:hover {
+  color: var(--text);
+  border-color: #555;
+}
+
+.btn-trash-spam {
+  background: var(--spam-dim);
+  color: var(--spam);
+  border: 1px solid var(--spam-border);
+}
+
+.btn-trash-spam:hover {
+  background: var(--spam);
+  color: #000;
+}
+
+/* ── Tabs ──────────────────────────────────────────────────── */
+
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color var(--transition), border-color var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.tab-btn:hover {
+  color: var(--text);
+}
+
+.tab-active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.tab-active[data-tab="spam"] {
+  border-bottom-color: var(--spam);
+}
+
+/* Spam count badge inside tab */
+.spam-badge {
+  display: inline-block;
+  background: var(--spam);
+  color: #000;
+  font-size: 9px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 10px;
+  min-width: 16px;
+  text-align: center;
+}
+
+/* Spam row highlight in table */
+.sender-table tbody tr.row-spam .sender-email {
+  color: var(--spam);
+}
+
+.badge-spam-count {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--spam);
+  min-width: 32px;
+  text-align: center;
+}

@@ -1,15 +1,17 @@
 {
   "manifest_version": 3,
   "name": "Gmail Declutterer",
-  "version": "1.0.0",
-  "description": "Scan your Gmail inbox, identify top senders, and bulk-delete unwanted emails using the official Gmail API.",
+  "version": "1.1.0",
+  "description": "Scan your Gmail inbox, identify top senders, classify spam with BERT, and bulk-trash unwanted emails.",
+
   "permissions": [
     "identity",
     "storage",
     "tabs"
   ],
   "host_permissions": [
-    "https://www.googleapis.com/*"
+    "https://www.googleapis.com/*",
+    "http://127.0.0.1:5001/*"
   ],
   "oauth2": {
     "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",

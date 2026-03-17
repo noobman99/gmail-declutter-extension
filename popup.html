@@ -13,24 +13,23 @@
 
 <body>
 
-  <!-- ── Top Bar ─────────────────────────────────────────────────── -->
+  <!-- ── Top Bar ───────────────────────────────────────────── -->
   <header class="topbar">
     <div class="logo">
       <span class="logo-icon">✦</span>
-      <span class="logo-text">Gmail<em>Declutterer</em></span>
+      <span class="logo-text">INBOX<em>ZERO</em></span>
     </div>
     <button id="btn-signout" class="btn-ghost" hidden>Sign out</button>
   </header>
 
-  <!-- ── Views ──────────────────────────────────────────────────── -->
-
-  <!-- View: Auth -->
+  <!-- ── View: Auth ────────────────────────────────────────── -->
   <section id="view-auth" class="view active">
     <div class="hero">
       <div class="hero-glyph">✉</div>
       <h1 class="hero-title">Declutter<br />your inbox</h1>
       <p class="hero-sub">
-        Connect your Gmail account to scan senders<br />and bulk-delete what you don't need.
+        Connect your Gmail account to scan senders,<br />
+        detect spam with AI, and bulk-clean what you don't need.
       </p>
       <button id="btn-login" class="btn-primary">
         <svg width="18" height="18" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -51,7 +50,7 @@
     </div>
   </section>
 
-  <!-- View: Dashboard -->
+  <!-- ── View: Dashboard ───────────────────────────────────── -->
   <section id="view-dashboard" class="view" hidden>
 
     <!-- Stats strip -->
@@ -66,11 +65,11 @@
       </div>
       <div class="stat">
         <span class="stat-val" id="stat-deleted">0</span>
-        <span class="stat-label">deleted</span>
+        <span class="stat-label">trashed</span>
       </div>
     </div>
 
-    <!-- Cache info -->
+    <!-- Cache / scan info -->
     <div class="cache-bar">
       <span id="cache-info" class="cache-info">No previous scan</span>
     </div>
@@ -88,6 +87,31 @@
       </div>
     </div>
 
+    <!-- Spam bar — shown after scan -->
+    <div id="spam-bar" class="spam-bar" hidden>
+      <div class="spam-bar-left">
+        <span id="spam-server-dot" class="server-dot dot-unknown" title="Spam server status"></span>
+        <span id="spam-bar-label" class="spam-bar-label">AI Spam Detection</span>
+      </div>
+      <div class="spam-bar-right">
+        <button id="btn-spam-scan" class="btn-sm btn-spam-scan" disabled>
+          Scan for spam
+        </button>
+      </div>
+    </div>
+
+    <!-- Spam alert — shown when spam is found -->
+    <div id="spam-alert" class="spam-alert" hidden>
+      <div class="spam-alert-header">
+        <span class="spam-alert-icon">⚠</span>
+        <span id="spam-alert-text" class="spam-alert-text"></span>
+      </div>
+      <div class="spam-alert-actions">
+        <button id="btn-view-spam" class="btn-sm btn-view-spam">View spam senders</button>
+        <button id="btn-trash-all-spam" class="btn-sm btn-trash-spam">Trash all spam</button>
+      </div>
+    </div>
+
     <!-- Progress -->
     <div id="progress-wrap" class="progress-wrap" hidden>
       <div class="progress-bar-track">
@@ -96,13 +120,19 @@
       <p id="progress-label" class="progress-label">Initialising…</p>
     </div>
 
+    <!-- Tabs: All senders / Spam senders -->
+    <div id="tab-bar" class="tab-bar" hidden>
+      <button id="tab-all" class="tab-btn tab-active">All Senders</button>
+      <button id="tab-spam" class="tab-btn">Spam Senders <span id="spam-badge" class="spam-badge"></span></button>
+    </div>
+
     <!-- Table -->
     <div id="table-wrap" class="table-wrap" hidden>
       <table class="sender-table">
         <thead>
           <tr>
             <th>Sender</th>
-            <th class="th-count">Emails</th>
+            <th class="th-count" id="th-count-label">Emails</th>
             <th class="th-actions">Actions</th>
           </tr>
         </thead>
@@ -118,10 +148,10 @@
 
   </section>
 
-  <!-- ── Confirmation Modal ───────────────────────────────────────── -->
+  <!-- ── Modal ─────────────────────────────────────────────── -->
   <div id="modal-overlay" class="modal-overlay" hidden>
     <div class="modal">
-      <h2 class="modal-title">Delete all emails?</h2>
+      <h2 id="modal-title" class="modal-title">Move to trash?</h2>
       <p id="modal-body" class="modal-body"></p>
       <div class="modal-actions">
         <button id="modal-cancel" class="btn-ghost">Cancel</button>
@@ -130,7 +160,7 @@
     </div>
   </div>
 
-  <!-- ── Toast ────────────────────────────────────────────────────── -->
+  <!-- ── Toast ─────────────────────────────────────────────── -->
   <div id="toast" class="toast" hidden></div>
 
   <script src="popup.js" type="module"></script>

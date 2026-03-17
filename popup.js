@@ -1,10 +1,8 @@
 /**
  * popup.js
  * Controls the extension popup UI.
- *
  * On open, queries the background service worker for its current runningState
- * and restores the correct screen — scanning in-progress, results table, or
- * a delete in-progress — so the UI is always consistent with reality.
+ * and restores the correct screen including any spam scan results.
  */
 
 import { formatNumber, relativeTime } from './utils.js';
@@ -13,11 +11,14 @@ import { formatNumber, relativeTime } from './utils.js';
 
 const state = {
   token: null,
-  senders: [],
-  filtered: [],
+  senders: [],       // All senders from last inbox scan
+  filtered: [],       // Currently rendered (search-filtered) list
+  spamSenders: [],       // Senders with detected spam
+  activeTab: 'all',    // 'all' | 'spam'
   totalScanned: 0,
   totalDeleted: 0,
   scanning: false,
+  spamScanning: false,
   deletingEmail: null,
 };
 
@@ -40,13 +41,33 @@ const els = {
   progressBar: $('progress-bar'),
   progressLabel: $('progress-label'),
   cacheInfo: $('cache-info'),
+  // Spam bar
+  spamBar: $('spam-bar'),
+  spamServerDot: $('spam-server-dot'),
+  spamBarLabel: $('spam-bar-label'),
+  btnSpamScan: $('btn-spam-scan'),
+  // Spam alert
+  spamAlert: $('spam-alert'),
+  spamAlertText: $('spam-alert-text'),
+  btnViewSpam: $('btn-view-spam'),
+  btnTrashAllSpam: $('btn-trash-all-spam'),
+  // Tabs
+  tabBar: $('tab-bar'),
+  tabAll: $('tab-all'),
+  tabSpam: $('tab-spam'),
+  spamBadge: $('spam-badge'),
+  // Table
   tableWrap: $('table-wrap'),
+  thCountLabel: $('th-count-label'),
   tbody: $('sender-tbody'),
   emptyState: $('empty-state'),
+  // Modal
   modalOverlay: $('modal-overlay'),
+  modalTitle: $('modal-title'),
   modalBody: $('modal-body'),
   modalCancel: $('modal-cancel'),
   modalConfirm: $('modal-confirm'),
+  // Toast
   toast: $('toast'),
 };
 
@@ -61,9 +82,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   state.token = token;
   showDashboard();
 
-  // Ask the background worker what it was doing — restore the correct screen
   const { uiState } = await sendToBackground('GET_UI_STATE', {});
   await restoreUiState(uiState);
+
+  // Probe server status in background (non-blocking)
+  pollServerStatus();
 });
 
 function silentGetToken() {
@@ -74,58 +97,74 @@ function silentGetToken() {
   });
 }
 
-/**
- * Restores the popup to match whatever the background worker is currently doing.
- * @param {object} uiState - runningState from background.js
- */
+// ─── State restoration ────────────────────────────────────────────────────────
+
 async function restoreUiState(uiState) {
   if (!uiState) { await loadCacheInfo(); return; }
 
   state.totalDeleted = uiState.totalDeleted ?? 0;
   els.statDeleted.textContent = formatNumber(state.totalDeleted);
 
+  // Restore spam result if present
+  if (uiState.spamResult) {
+    applySpamResult(uiState.spamResult);
+  }
+
   switch (uiState.status) {
-
-    case 'scanning': {
-      // A scan is running — show the progress UI and wait for events
+    case 'scanning':
       state.scanning = true;
-      setScanningUiMode(uiState.progress?.isIncremental ?? false);
-      if (uiState.progress) {
-        applyProgressSnapshot(uiState.progress);
-      }
+      setScanningUiMode();
+      if (uiState.progress) applyProgressSnapshot(uiState.progress);
       break;
-    }
 
-    case 'scan_complete': {
-      // Scan already finished — render the results immediately
-      const r = uiState.scanResult;
-      if (r) {
-        applyScanResult(r);
-      } else {
-        await loadCacheInfo();
-      }
+    case 'spam_scanning':
+      if (uiState.scanResult) applyScanResult(uiState.scanResult, true);
+      setSpamScanningUiMode();
       break;
-    }
 
-    case 'deleting': {
-      // A delete is running — show the last-known scan results AND the progress bar
-      const r = uiState.scanResult;
-      if (r) applyScanResult(r, /* suppressProgress= */ true);
+    case 'scan_complete':
+      if (uiState.scanResult) applyScanResult(uiState.scanResult);
+      break;
 
+    case 'deleting':
+      if (uiState.scanResult) applyScanResult(uiState.scanResult, true);
       state.deletingEmail = uiState.deleteTarget;
       els.progressWrap.hidden = false;
       els.progressBar.style.width = '20%';
       els.progressLabel.textContent = uiState.deleteTarget
-        ? `Deleting emails from ${uiState.deleteTarget}…`
-        : 'Deleting…';
+        ? `Moving emails from ${uiState.deleteTarget} to trash…`
+        : 'Moving to trash…';
       break;
-    }
 
     default:
-      // idle — just show cache timestamp
       await loadCacheInfo();
       break;
   }
+}
+
+// ─── Server status polling ────────────────────────────────────────────────────
+
+async function pollServerStatus() {
+  try {
+    const res = await fetch('http://127.0.0.1:5001/health', {
+      signal: AbortSignal.timeout(3000),
+    });
+    const data = await res.json();
+    const online = data.model_loaded === true;
+    setServerDot(online ? 'online' : 'offline');
+    els.btnSpamScan.disabled = !online;
+    els.spamBarLabel.textContent = online
+      ? 'AI Spam Detection — ready'
+      : 'AI Spam Detection — server offline';
+  } catch {
+    setServerDot('offline');
+    els.btnSpamScan.disabled = true;
+    els.spamBarLabel.textContent = 'AI Spam Detection — server offline';
+  }
+}
+
+function setServerDot(status) {
+  els.spamServerDot.className = `server-dot dot-${status}`;
 }
 
 // ─── Listeners ────────────────────────────────────────────────────────────────
@@ -139,6 +178,7 @@ els.btnLogin.addEventListener('click', async () => {
     state.token = result.token;
     showDashboard();
     await loadCacheInfo();
+    pollServerStatus();
   } catch (err) {
     showToast(`Sign-in failed: ${err.message}`, 'error');
     els.btnLogin.disabled = false;
@@ -148,33 +188,29 @@ els.btnLogin.addEventListener('click', async () => {
 
 els.btnSignout.addEventListener('click', async () => {
   await sendToBackground('SIGN_OUT', { token: state.token });
-  state.token = null;
-  state.senders = [];
-  state.filtered = [];
-  state.totalDeleted = 0;
-  state.totalScanned = 0;
+  Object.assign(state, { token: null, senders: [], filtered: [], spamSenders: [], totalDeleted: 0, totalScanned: 0 });
   showAuth();
   showToast('Signed out', 'success');
 });
 
-els.btnScan.addEventListener('click', () => {
-  if (state.scanning) return;
-  startScan(false);
-});
-
-els.btnForceRescan.addEventListener('click', () => {
-  if (state.scanning) return;
-  startScan(true);
-});
+els.btnScan.addEventListener('click', () => { if (!state.scanning) startScan(false); });
+els.btnForceRescan.addEventListener('click', () => { if (!state.scanning) startScan(true); });
+els.btnSpamScan.addEventListener('click', () => { if (!state.spamScanning) startSpamScan(); });
 
 els.searchInput.addEventListener('input', () => {
   filterSenders(els.searchInput.value.trim().toLowerCase());
 });
 
+// Tabs
+els.tabAll.addEventListener('click', () => switchTab('all'));
+els.tabSpam.addEventListener('click', () => switchTab('spam'));
+
+// Spam alert actions
+els.btnViewSpam.addEventListener('click', () => switchTab('spam'));
+els.btnTrashAllSpam.addEventListener('click', () => requestTrashAllSpam());
+
 els.modalCancel.addEventListener('click', closeModal);
-els.modalOverlay.addEventListener('click', (e) => {
-  if (e.target === els.modalOverlay) closeModal();
-});
+els.modalOverlay.addEventListener('click', (e) => { if (e.target === els.modalOverlay) closeModal(); });
 
 // ─── Background message listener ──────────────────────────────────────────────
 
@@ -184,6 +220,9 @@ chrome.runtime.onMessage.addListener((message) => {
     case 'SCAN_PROGRESS': handleScanProgress(payload); break;
     case 'SCAN_COMPLETE': handleScanComplete(payload); break;
     case 'SCAN_ERROR': handleScanError(payload); break;
+    case 'SPAM_SCAN_PROGRESS': handleSpamScanProgress(payload); break;
+    case 'SPAM_SCAN_COMPLETE': handleSpamScanComplete(payload); break;
+    case 'SPAM_SCAN_ERROR': handleSpamScanError(payload); break;
     case 'DELETE_PROGRESS': handleDeleteProgress(payload); break;
     case 'DELETE_COMPLETE': handleDeleteComplete(payload); break;
     case 'DELETE_ERROR': handleDeleteError(payload); break;
@@ -197,85 +236,72 @@ async function loadCacheInfo() {
   updateCacheInfo(info);
 }
 
-function updateCacheInfo({ scannedAt, totalCached }) {
+function updateCacheInfo({ scannedAt, totalCached, spamCount, spamClassifiedAt }) {
   if (!scannedAt) {
     els.cacheInfo.textContent = 'No previous scan';
     els.btnForceRescan.hidden = true;
   } else {
+    const spamNote = spamClassifiedAt ? ` · ${formatNumber(spamCount)} spam` : '';
     els.cacheInfo.textContent =
-      `Last scan: ${relativeTime(scannedAt)} · ${formatNumber(totalCached)} cached`;
+      `Last scan: ${relativeTime(scannedAt)} · ${formatNumber(totalCached)} cached${spamNote}`;
     els.btnForceRescan.hidden = false;
   }
 }
 
-// ─── Scan ─────────────────────────────────────────────────────────────────────
+// ─── Inbox scan ───────────────────────────────────────────────────────────────
 
 function startScan(forceFull) {
   state.scanning = true;
   state.senders = [];
   state.filtered = [];
 
-  setScanningUiMode(/* isIncremental= */ false, forceFull);
-  els.progressBar.style.width = '0%';
-  els.progressLabel.textContent = forceFull
-    ? 'Starting full scan…'
-    : 'Checking for new messages…';
-
+  setScanningUiMode(forceFull);
   sendToBackground(forceFull ? 'FORCE_FULL_SCAN' : 'START_SCAN', { token: state.token });
 }
 
-/** Put the dashboard into "scanning" visual mode. */
-function setScanningUiMode() {
+function setScanningUiMode(forceFull = false) {
   els.btnScan.disabled = true;
   els.btnForceRescan.disabled = true;
+  els.btnSpamScan.disabled = true;
   els.btnScan.innerHTML = '<span class="btn-icon">⟳</span> Scanning…';
   els.searchInput.disabled = true;
   els.tableWrap.hidden = true;
   els.emptyState.hidden = true;
+  els.tabBar.hidden = true;
   els.progressWrap.hidden = false;
+  els.progressBar.style.width = '0%';
+  els.progressLabel.textContent = forceFull ? 'Starting full scan…' : 'Checking for new messages…';
 }
 
-/** Apply a progress snapshot to the progress bar/label (used on restore). */
 function applyProgressSnapshot({ phase, completed, total, isIncremental }) {
   const prefix = isIncremental ? '⚡ Incremental —' : '';
   if (phase === 'listing') {
     els.progressBar.style.width = '10%';
-    els.progressLabel.textContent =
-      `${prefix} ${formatNumber(completed)} new messages found…`.trim();
+    els.progressLabel.textContent = `${prefix} ${formatNumber(completed)} messages found…`.trim();
   } else if (phase === 'metadata') {
     const pct = total ? Math.round((completed / total) * 85) + 10 : 50;
     els.progressBar.style.width = `${pct}%`;
-    els.progressLabel.textContent =
-      `${prefix} Reading senders… ${formatNumber(completed)} / ${formatNumber(total || 0)}`.trim();
+    els.progressLabel.textContent = `${prefix} Reading senders… ${formatNumber(completed)} / ${formatNumber(total || 0)}`.trim();
   }
 }
 
-function handleScanProgress(payload) {
-  applyProgressSnapshot(payload);
-}
+function handleScanProgress(payload) { applyProgressSnapshot(payload); }
 
 function handleScanComplete(payload) {
   state.scanning = false;
   applyScanResult(payload);
 }
 
-/**
- * Applies a completed scan result to the UI.
- * @param {object} result - { senders, scannedAt, wasIncremental, newCount }
- * @param {boolean} suppressProgress - if true, don't hide progressWrap (delete may be showing it)
- */
 function applyScanResult(result, suppressProgress = false) {
   const { senders, scannedAt, wasIncremental, newCount } = result;
-
   state.senders = senders;
   state.filtered = [...senders];
   state.totalScanned = senders.reduce((sum, s) => sum + s.count, 0);
 
   if (!suppressProgress) {
-    const incrementalNote = wasIncremental ? ` (${formatNumber(newCount)} new)` : '';
+    const note = wasIncremental ? ` (${formatNumber(newCount)} new)` : '';
     els.progressBar.style.width = '100%';
-    els.progressLabel.textContent = `Done — ${formatNumber(senders.length)} senders${incrementalNote}`;
-
+    els.progressLabel.textContent = `Done — ${formatNumber(senders.length)} senders${note}`;
     setTimeout(() => finaliseScanUi(scannedAt), 800);
   } else {
     finaliseScanUi(scannedAt);
@@ -289,10 +315,12 @@ function finaliseScanUi(scannedAt) {
   els.btnScan.innerHTML = '<span class="btn-icon">⟳</span> Scan';
   els.btnForceRescan.hidden = false;
   els.searchInput.disabled = false;
-
-  updateCacheInfo({ scannedAt, totalCached: state.totalScanned });
+  els.spamBar.hidden = false;
+  els.tabBar.hidden = false;
+  updateCacheInfo({ scannedAt, totalCached: state.totalScanned, spamCount: state.spamSenders.length, spamClassifiedAt: null });
   updateStats();
-  renderTable(state.filtered);
+  renderCurrentTab();
+  pollServerStatus(); // refresh server status dot after scan
 }
 
 function handleScanError({ message }) {
@@ -304,25 +332,141 @@ function handleScanError({ message }) {
   showToast(`Scan failed: ${message}`, 'error');
 }
 
-// ─── Delete ───────────────────────────────────────────────────────────────────
+// ─── Spam scan ────────────────────────────────────────────────────────────────
+
+function startSpamScan() {
+  state.spamScanning = true;
+  setSpamScanningUiMode();
+  sendToBackground('RUN_SPAM_SCAN', { token: state.token });
+}
+
+function setSpamScanningUiMode() {
+  els.btnSpamScan.disabled = true;
+  els.btnSpamScan.textContent = 'Scanning…';
+  els.progressWrap.hidden = false;
+  els.progressBar.style.width = '2%';
+  els.progressLabel.textContent = 'Preparing spam scan…';
+}
+
+function handleSpamScanProgress({ phase, completed, total }) {
+  if (phase === 'fetching') {
+    const pct = total ? Math.round((completed / total) * 40) + 2 : 20;
+    els.progressBar.style.width = `${pct}%`;
+    els.progressLabel.textContent = `Fetching email content… ${formatNumber(completed)} / ${formatNumber(total)}`;
+  } else if (phase === 'classifying') {
+    const pct = total ? Math.round((completed / total) * 55) + 42 : 70;
+    els.progressBar.style.width = `${pct}%`;
+    els.progressLabel.textContent = `Classifying with BERT… ${formatNumber(completed)} / ${formatNumber(total)}`;
+  }
+}
+
+function handleSpamScanComplete(payload) {
+  state.spamScanning = false;
+  applySpamResult(payload);
+
+  els.progressBar.style.width = '100%';
+  els.progressLabel.textContent = `Spam scan complete — ${formatNumber(payload.spamCount)} spam messages found`;
+  setTimeout(() => {
+    els.progressWrap.hidden = true;
+    els.btnSpamScan.disabled = false;
+    els.btnSpamScan.textContent = 'Re-scan';
+    loadCacheInfo();
+  }, 1000);
+}
+
+function handleSpamScanError({ message }) {
+  state.spamScanning = false;
+  els.progressWrap.hidden = true;
+  els.btnSpamScan.disabled = false;
+  els.btnSpamScan.textContent = 'Scan for spam';
+  showToast(`Spam scan failed: ${message}`, 'error');
+}
+
+function applySpamResult({ spamSenders, spamCount }) {
+  state.spamSenders = spamSenders || [];
+
+  // Update spam badge on tab
+  els.spamBadge.textContent = spamCount > 0 ? formatNumber(spamCount) : '';
+
+  // Show/hide spam alert
+  if (spamCount > 0) {
+    els.spamAlertText.textContent =
+      `${formatNumber(spamCount)} spam email${spamCount !== 1 ? 's' : ''} detected from ${formatNumber(spamSenders.length)} sender${spamSenders.length !== 1 ? 's' : ''}`;
+    els.spamAlert.hidden = false;
+  } else {
+    els.spamAlert.hidden = true;
+  }
+
+  // Re-render if spam tab is active
+  if (state.activeTab === 'spam') renderCurrentTab();
+}
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+
+function switchTab(tab) {
+  state.activeTab = tab;
+
+  els.tabAll.classList.toggle('tab-active', tab === 'all');
+  els.tabSpam.classList.toggle('tab-active', tab === 'spam');
+  els.tabAll.dataset.tab = 'all';
+  els.tabSpam.dataset.tab = 'spam';
+
+  els.thCountLabel.textContent = tab === 'spam' ? 'Spam' : 'Emails';
+  els.searchInput.placeholder = tab === 'spam' ? 'Filter spam senders…' : 'Filter senders…';
+
+  renderCurrentTab();
+}
+
+function renderCurrentTab() {
+  if (state.activeTab === 'spam') {
+    const query = els.searchInput.value.trim().toLowerCase();
+    const list = query
+      ? state.spamSenders.filter(s => s.email.includes(query) ||
+        (s.displayName && s.displayName.toLowerCase().includes(query)))
+      : [...state.spamSenders];
+    renderTable(list, true);
+  } else {
+    filterSenders(els.searchInput.value.trim().toLowerCase());
+  }
+}
+
+// ─── Sender trash confirmation ────────────────────────────────────────────────
+
+function requestTrashAllSpam() {
+  const count = state.spamSenders.reduce((sum, s) => sum + s.spamCount, 0);
+  els.modalTitle.textContent = 'Trash all spam?';
+  els.modalBody.innerHTML =
+    `This will move <strong>${formatNumber(count)} spam email${count !== 1 ? 's' : ''}</strong> from <strong>${formatNumber(state.spamSenders.length)} sender${state.spamSenders.length !== 1 ? 's' : ''}</strong> to Trash. You can recover them within 30 days.`;
+  showModal();
+  els.modalConfirm.onclick = () => {
+    closeModal();
+    executeTrashAllSpam();
+  };
+}
+
+function executeTrashAllSpam() {
+  els.progressWrap.hidden = false;
+  els.progressBar.style.width = '10%';
+  els.progressLabel.textContent = 'Moving spam to trash…';
+  sendToBackground('TRASH_SPAM', { token: state.token });
+}
 
 function requestDelete(email, count) {
+  els.modalTitle.textContent = 'Move to trash?';
   els.modalBody.innerHTML =
-    `This will move <strong>${formatNumber(count)} email${count !== 1 ? 's' : ''}</strong> from <code>${email}</code> to Trash. You can recover them within 30 days.`;
+    `This will move <strong>${formatNumber(count)} email${count !== 1 ? 's' : ''}</strong> from <code>${escapeHtml(email)}</code> to Trash. You can recover them within 30 days.`;
   showModal();
   els.modalConfirm.onclick = () => { closeModal(); executeDelete(email); };
 }
 
 function executeDelete(email) {
   state.deletingEmail = email;
-
   const btn = document.querySelector(`[data-delete="${CSS.escape(email)}"]`);
   if (btn) { btn.disabled = true; btn.textContent = 'Moving to trash…'; }
 
   els.progressWrap.hidden = false;
   els.progressBar.style.width = '5%';
   els.progressLabel.textContent = `Moving emails from ${email} to trash…`;
-
   sendToBackground('DELETE_SENDER', { token: state.token, email });
 }
 
@@ -336,36 +480,55 @@ function handleDeleteProgress({ phase, completed }) {
 function handleDeleteComplete({ email, trashed: deleted }) {
   state.deletingEmail = null;
   state.totalDeleted += deleted;
-
-  // Sync total back to background so it survives popup close
   sendToBackground('ACK_DELETED', { totalDeleted: state.totalDeleted });
-
   els.statDeleted.textContent = formatNumber(state.totalDeleted);
 
-  const row = document.querySelector(`tr[data-email="${CSS.escape(email)}"]`);
-  if (row) row.classList.add('row-deleted');
-
-  state.senders = state.senders.filter((s) => s.email !== email);
-  filterSenders(els.searchInput.value.trim().toLowerCase());
+  if (email === '__spam__') {
+    // Bulk spam trash completed
+    state.spamSenders = [];
+    els.spamBadge.textContent = '';
+    els.spamAlert.hidden = true;
+    showToast(`✓ Moved ${formatNumber(deleted)} spam emails to Trash`, 'success');
+  } else {
+    const row = document.querySelector(`tr[data-email="${CSS.escape(email)}"]`);
+    if (row) row.classList.add('row-deleted');
+    state.senders = state.senders.filter(s => s.email !== email);
+    state.spamSenders = state.spamSenders.filter(s => s.email !== email);
+    showToast(`✓ Moved ${formatNumber(deleted)} emails from ${email} to Trash`, 'success');
+  }
 
   els.progressWrap.hidden = true;
   updateStats();
   loadCacheInfo();
-  showToast(`✓ Moved ${formatNumber(deleted)} emails from ${email} to Trash`, 'success');
+  renderCurrentTab();
 }
 
 function handleDeleteError({ message }) {
   state.deletingEmail = null;
   els.progressWrap.hidden = true;
-  showToast(`Delete failed: ${message}`, 'error');
+  showToast(`Failed: ${message}`, 'error');
 }
 
-// ─── Table ────────────────────────────────────────────────────────────────────
+// ─── Table rendering ──────────────────────────────────────────────────────────
 
-function renderTable(senders) {
+function filterSenders(query) {
+  state.filtered = query
+    ? state.senders.filter(s =>
+      s.email.includes(query) ||
+      (s.displayName && s.displayName.toLowerCase().includes(query)))
+    : [...state.senders];
+  renderTable(state.filtered, false);
+}
+
+/**
+ * Renders a list of senders into the table.
+ * @param {Array} list   - Array of { email, displayName, count } or { email, displayName, spamCount }
+ * @param {boolean} isSpam - Whether rendering the spam tab
+ */
+function renderTable(list, isSpam) {
   els.tbody.innerHTML = '';
 
-  if (senders.length === 0) {
+  if (list.length === 0) {
     els.tableWrap.hidden = true;
     els.emptyState.hidden = false;
     return;
@@ -374,11 +537,14 @@ function renderTable(senders) {
   els.emptyState.hidden = true;
   els.tableWrap.hidden = false;
 
-  for (const { email, displayName, count } of senders) {
+  for (const sender of list) {
+    const { email, displayName } = sender;
+    const count = isSpam ? sender.spamCount : sender.count;
+    const showName = displayName && displayName.toLowerCase() !== email;
+
     const tr = document.createElement('tr');
     tr.dataset.email = email;
-
-    const showName = displayName && displayName.toLowerCase() !== email;
+    if (isSpam) tr.classList.add('row-spam');
 
     tr.innerHTML = `
       <td class="td-email">
@@ -386,19 +552,21 @@ function renderTable(senders) {
         ${showName ? `<span class="sender-name">${escapeHtml(displayName)}</span>` : ''}
       </td>
       <td class="td-count">
-        <span class="badge-count">${formatNumber(count)}</span>
+        <span class="${isSpam ? 'badge-spam-count' : 'badge-count'}">${formatNumber(count)}</span>
       </td>
       <td class="td-actions">
         <div class="actions-group">
           <button class="btn-sm btn-view"   data-view="${escapeHtml(email)}">View</button>
-          <button class="btn-sm btn-delete" data-delete="${escapeHtml(email)}" data-count="${count}">Move to trash</button>
+          <button class="btn-sm btn-delete" data-delete="${escapeHtml(email)}" data-count="${count}">
+            Move to trash
+          </button>
         </div>
       </td>
     `;
-
     els.tbody.appendChild(tr);
   }
 
+  // Event delegation
   els.tbody.onclick = (e) => {
     const viewBtn = e.target.closest('[data-view]');
     const deleteBtn = e.target.closest('[data-delete]');
@@ -420,16 +588,6 @@ function renderTable(senders) {
       requestDelete(deleteBtn.dataset.delete, parseInt(deleteBtn.dataset.count, 10));
     }
   };
-}
-
-function filterSenders(query) {
-  state.filtered = query
-    ? state.senders.filter(
-      (s) => s.email.includes(query) ||
-        (s.displayName && s.displayName.toLowerCase().includes(query))
-    )
-    : [...state.senders];
-  renderTable(state.filtered);
 }
 
 // ─── View helpers ─────────────────────────────────────────────────────────────
@@ -473,7 +631,7 @@ function showToast(message, type = 'default') {
   toastTimeout = setTimeout(() => {
     els.toast.classList.remove('visible');
     setTimeout(() => { els.toast.hidden = true; }, 240);
-  }, 3200);
+  }, 3500);
 }
 
 // ─── Messaging helper ─────────────────────────────────────────────────────────
@@ -487,7 +645,7 @@ function sendToBackground(type, payload) {
   });
 }
 
-// ─── Misc helpers ─────────────────────────────────────────────────────────────
+// ─── Misc ─────────────────────────────────────────────────────────────────────
 
 function escapeHtml(str) {
   return str
